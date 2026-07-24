@@ -1,0 +1,6 @@
+{
+  "name": "Vixy Taxi - Cliente Venezuela",
+  "description": "Aplicación cliente de taxi, moto y delivery en Venezuela con tema Bento Grid en morado, negro y blanco, seguimiento GPS en tiempo real, recargas en Bs y $, Pago Móvil, Zinli, Binance, botón de pánico y soporte 24/7.",
+  "requestFramePermissions": ["geolocation", "camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
