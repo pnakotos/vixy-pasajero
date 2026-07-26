@@ -141,6 +141,13 @@ export default function App() {
       setDriverLocation(initialDriverLoc);
       setIsSearchingDriver(false);
 
+      // Sync ride request with Administrative Panel (https://vhixy.site/)
+      fetch('/api/admin/sync-ride', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newRide),
+      }).catch(err => console.log('Admin sync notice:', err));
+
       // Initial chat message from assigned driver
       setDriverChatMessages([
         {
@@ -259,6 +266,14 @@ export default function App() {
   // Add Transaction to Wallet
   const handleAddTransaction = (newTx: WalletTransaction) => {
     setTransactions(prev => [newTx, ...prev]);
+
+    // Sync payment transaction with Administrative Panel (https://vhixy.site/)
+    fetch('/api/admin/sync-wallet', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newTx),
+    }).catch(err => console.log('Admin wallet sync notice:', err));
+
     if (newTx.status === 'approved' && newTx.type === 'recharge') {
       setWalletBalanceUsd(prev => prev + newTx.amountUsd);
       
@@ -266,7 +281,7 @@ export default function App() {
       const newNotif: AppNotification = {
         id: `notif_rec_${Date.now()}`,
         title: '¡Recarga Aprobada! 💳',
-        body: `Se acreditaron $${newTx.amountUsd.toFixed(2)} USD a tu billetera VeloX.`,
+        body: `Se acreditaron $${newTx.amountUsd.toFixed(2)} USD a tu billetera Vixy Taxi.`,
         type: 'payment',
         date: 'Ahora mismo',
         read: false,
