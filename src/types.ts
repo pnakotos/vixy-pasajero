@@ -68,6 +68,8 @@ export interface RideRequest {
   scheduledDate?: string;
   scheduledTime?: string;
   notes?: string;
+  isUniversityFare?: boolean;
+  universityName?: string;
 }
 
 export interface WalletTransaction {

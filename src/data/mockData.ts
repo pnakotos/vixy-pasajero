@@ -20,11 +20,13 @@ export const MOCK_USER: UserProfile = {
 
 export const MOCK_LOCATIONS = [
   { name: 'Plaza Altamira, Chacao, Caracas', coords: [10.4960, -66.8488] as [number, number] },
+  { name: 'Ciudad Universitaria UCV, San Pedro, Caracas', coords: [10.4883, -66.8893] as [number, number] },
+  { name: 'Universidad Católica Andrés Bello (UCAB), Montalbán', coords: [10.4651, -66.9732] as [number, number] },
+  { name: 'Universidad Simón Bolívar (USB), Sartenejas, Baruta', coords: [10.4103, -66.8850] as [number, number] },
+  { name: 'Universidad Metropolitana (UNIMET), Terrazas del Ávila', coords: [10.4800, -66.8080] as [number, number] },
   { name: 'C.C. Sambil Chacao, Av. Libertador', coords: [10.4908, -66.8550] as [number, number] },
   { name: 'Calle París, Las Mercedes, Baruta', coords: [10.4795, -66.8592] as [number, number] },
   { name: 'Plaza Venezuela, Los Caobos', coords: [10.4972, -66.8829] as [number, number] },
-  { name: 'Ciudad Universitaria UCV, San Pedro', coords: [10.4883, -66.8893] as [number, number] },
-  { name: 'C.C. Tolón Fashion Mall, Las Mercedes', coords: [10.4761, -66.8611] as [number, number] },
   { name: 'Aeropuerto Int. Simón Bolívar, Maiquetía', coords: [10.6031, -66.9906] as [number, number] },
   { name: 'Terminal de Pasajeros La Bandera', coords: [10.4735, -66.9110] as [number, number] },
 ];

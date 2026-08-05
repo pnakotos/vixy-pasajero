@@ -177,6 +177,139 @@ async function startServer() {
     });
   });
 
+  // ==========================================
+  // TARIFA UNIVERSITARIA (UNIVERSITY FARE BACKEND SERVICE)
+  // ==========================================
+  let universityFareConfig = {
+    active: true, // Backend toggle state
+    discountPercentage: 30, // 30% student discount established by backend
+    minimumFareUsd: 1.50,
+    universityKeywords: [
+      "universidad", "ucv", "ucab", "usb", "unimet", "unefa", 
+      "iut", "udo", "ula", "luz", "ucat", "unesr", "campus", 
+      "facultad", "rectorado", "ciudad universitaria", "politécnico", "iutep"
+    ],
+    supportedUniversities: [
+      { name: "UCV - Ciudad Universitaria de Caracas", acronym: "UCV", code: "ucv_caracas" },
+      { name: "UCAB - Universidad Católica Andrés Bello (Montalbán)", acronym: "UCAB", code: "ucab_montalban" },
+      { name: "USB - Universidad Simón Bolívar (Sartenejas)", acronym: "USB", code: "usb_sartenejas" },
+      { name: "UNIMET - Universidad Metropolitana (Terrazas del Ávila)", acronym: "UNIMET", code: "unimet_caracas" },
+      { name: "ULA - Universidad de Los Andes", acronym: "ULA", code: "ula_merida" },
+      { name: "LUZ - Universidad del Zulia", acronym: "LUZ", code: "luz_maracaibo" },
+      { name: "UDO - Universidad de Oriente", acronym: "UDO", code: "udo_oriente" },
+      { name: "UNEFA - Universidad Nacional Experimental Politécnica", acronym: "UNEFA", code: "unefa_ve" }
+    ]
+  };
+
+  // Endpoint to check backend University Fare Status
+  app.get("/api/university-fare/status", (req, res) => {
+    res.json({
+      success: true,
+      active: universityFareConfig.active,
+      discountPercentage: universityFareConfig.discountPercentage,
+      minimumFareUsd: universityFareConfig.minimumFareUsd,
+      message: universityFareConfig.active
+        ? `Tarifa Universitaria ACTIVA en Servidor (${universityFareConfig.discountPercentage}% de Descuento para Estudiantes con destino Universitario)`
+        : "Tarifa Universitaria INACTIVA temporalmente en Servidor",
+      supportedUniversities: universityFareConfig.supportedUniversities
+    });
+  });
+
+  // Endpoint to toggle or update University Fare settings on the Backend
+  app.post("/api/university-fare/toggle", (req, res) => {
+    const { active, discountPercentage } = req.body;
+    if (typeof active === "boolean") {
+      universityFareConfig.active = active;
+    }
+    if (typeof discountPercentage === "number" && discountPercentage > 0 && discountPercentage < 90) {
+      universityFareConfig.discountPercentage = discountPercentage;
+    }
+    console.log(`[University Fare Backend] Config updated: active=${universityFareConfig.active}, discount=${universityFareConfig.discountPercentage}%`);
+    res.json({
+      success: true,
+      config: universityFareConfig,
+      message: `Configuración de Tarifa Universitaria actualizada. Activo: ${universityFareConfig.active}`
+    });
+  });
+
+  // Endpoint to validate if destination is a university and calculate backend student rate
+  app.post("/api/university-fare/check", (req, res) => {
+    try {
+      const { pickupAddress = "", dropoffAddress = "", basePriceUsd = 0, exchangeRateVes = 65.0 } = req.body;
+
+      // Rule 1: Check if active in backend
+      if (!universityFareConfig.active) {
+        return res.json({
+          applicable: false,
+          reason: "La Tarifa Universitaria no está activa actualmente en el servidor.",
+          backendActive: false,
+          isUniversityDestination: false
+        });
+      }
+
+      // Rule 2: Verify that destination (dropoffAddress) is strictly a university address
+      const normalizedDropoff = (dropoffAddress || "").toLowerCase().trim();
+      
+      if (!normalizedDropoff) {
+        return res.json({
+          applicable: false,
+          reason: "Por favor ingresa una dirección de destino.",
+          backendActive: true,
+          isUniversityDestination: false
+        });
+      }
+
+      const matchedKeyword = universityFareConfig.universityKeywords.find(kw => 
+        normalizedDropoff.includes(kw)
+      );
+
+      const matchedUniversity = universityFareConfig.supportedUniversities.find(uni =>
+        normalizedDropoff.includes(uni.acronym.toLowerCase()) || 
+        normalizedDropoff.includes(uni.name.toLowerCase())
+      );
+
+      const isUniversityDestination = Boolean(matchedKeyword || matchedUniversity);
+
+      if (!isUniversityDestination) {
+        return res.json({
+          applicable: false,
+          reason: "La Tarifa Universitaria sólo aplica si el destino final es una Universidad (Ej: UCV, UCAB, USB, UNIMET, UNEFA, ULA, LUZ, UDO, etc.).",
+          backendActive: true,
+          isUniversityDestination: false
+        });
+      }
+
+      // Rule 3: Fare is calculated and established by the backend
+      const numericBasePrice = typeof basePriceUsd === "number" && basePriceUsd > 0 ? basePriceUsd : 3.00;
+      const discountAmountUsd = (numericBasePrice * (universityFareConfig.discountPercentage / 100));
+      let calculatedStudentPriceUsd = numericBasePrice - discountAmountUsd;
+      
+      // Ensure minimum fare threshold
+      if (calculatedStudentPriceUsd < universityFareConfig.minimumFareUsd) {
+        calculatedStudentPriceUsd = universityFareConfig.minimumFareUsd;
+      }
+
+      const calculatedStudentPriceVes = calculatedStudentPriceUsd * exchangeRateVes;
+
+      return res.json({
+        applicable: true,
+        backendActive: true,
+        isUniversityDestination: true,
+        universityName: matchedUniversity ? matchedUniversity.name : "Dirección Universitaria Verificada",
+        discountPercentage: universityFareConfig.discountPercentage,
+        originalPriceUsd: numericBasePrice,
+        universityPriceUsd: parseFloat(calculatedStudentPriceUsd.toFixed(2)),
+        universityPriceVes: parseFloat(calculatedStudentPriceVes.toFixed(2)),
+        savingsUsd: parseFloat((numericBasePrice - calculatedStudentPriceUsd).toFixed(2)),
+        badgeText: `🎓 Tarifa Universitaria (-${universityFareConfig.discountPercentage}%)`,
+        message: `¡Felicidades! Calificas para la Tarifa Universitaria Vixy al dirigirte a una sede universitaria.`
+      });
+
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // API endpoint for 24/7 Customer Support Chat powered by Gemini
   app.post("/api/support-chat", async (req, res) => {
     try {

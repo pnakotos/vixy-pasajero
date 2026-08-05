@@ -17,13 +17,27 @@ import { SupportChatView } from './components/SupportChatView';
 import { LoginScreen } from './components/LoginScreen';
 import { TripCompletedModal } from './components/TripCompletedModal';
 import { BottomNav, ActiveTab } from './components/BottomNav';
+import { syncUserProfileToFirestore, syncRideToFirestore, syncTransactionToFirestore } from './lib/firebaseSync';
+import { testFirestoreConnection } from './lib/firebase';
 
 export default function App() {
   // Navigation & User State
-  const [isLoggedIn, setIsLoggedIn] = useState<boolean>(true);
+  const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<ActiveTab>('map');
   const [user, setUser] = useState<UserProfile>(MOCK_USER);
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+
+  // Test connection to Firestore on boot as per Firebase skill mandate
+  useEffect(() => {
+    testFirestoreConnection();
+  }, []);
+
+  // Sync User Profile to Firestore whenever logged in user changes
+  useEffect(() => {
+    if (isLoggedIn && user && user.id) {
+      syncUserProfileToFirestore(user);
+    }
+  }, [isLoggedIn, user]);
 
   const handleToggleTheme = () => {
     const nextTheme = theme === 'dark' ? 'light' : 'dark';
@@ -102,13 +116,43 @@ export default function App() {
   };
 
   // Request Ride Handler
-  const handleRequestRide = () => {
+  const handleRequestRide = async () => {
     if (!user.isVerified) {
       setIsUnverifiedModalOpen(true);
       return;
     }
     if (!dropoffAddress) return;
     setIsSearchingDriver(true);
+
+    // Verify backend University Fare check prior to dispatch
+    let finalUsd = calculatedPriceUsd;
+    let finalVes = calculatedPriceVes;
+    let isUni = false;
+    let uniName = '';
+
+    try {
+      const checkRes = await fetch('/api/university-fare/check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pickupAddress,
+          dropoffAddress,
+          basePriceUsd: calculatedPriceUsd,
+          exchangeRateVes: EXCHANGE_RATE_VES,
+        }),
+      });
+      if (checkRes.ok) {
+        const checkData = await checkRes.json();
+        if (checkData.applicable && checkData.universityPriceUsd) {
+          finalUsd = checkData.universityPriceUsd;
+          finalVes = checkData.universityPriceVes || (finalUsd * EXCHANGE_RATE_VES);
+          isUni = true;
+          uniName = checkData.universityName || '';
+        }
+      }
+    } catch (err) {
+      console.log('Error al consultar tarifa universitaria antes de solicitar:', err);
+    }
 
     // Simulate driver matching in 2.5 seconds
     setTimeout(() => {
@@ -127,19 +171,24 @@ export default function App() {
         dropoffCoords,
         distanceKm,
         durationMins: Math.round(distanceKm * 2.5),
-        priceUsd: calculatedPriceUsd,
-        priceVes: calculatedPriceVes,
+        priceUsd: parseFloat(finalUsd.toFixed(2)),
+        priceVes: parseFloat(finalVes.toFixed(2)),
         paymentMethod,
         driver: matchedDriver,
         status: 'driver_assigned',
         createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         etaDriverArrivalMins: 3,
         etaTripArrivalMins: Math.round(distanceKm * 2.5),
+        isUniversityFare: isUni,
+        universityName: uniName || undefined,
       };
 
       setCurrentRide(newRide);
       setDriverLocation(initialDriverLoc);
       setIsSearchingDriver(false);
+
+      // Sync ride request with Firebase Firestore
+      syncRideToFirestore(newRide, user.id);
 
       // Sync ride request with Administrative Panel (https://vhixy.site/)
       fetch('/api/admin/sync-ride', {
@@ -153,7 +202,7 @@ export default function App() {
         {
           id: 'chat_init',
           sender: 'driver',
-          text: `¡Hola ${user.name}! Soy tu conductor ${matchedDriver.name}. Ya voy en camino a tu punto de origen en mi ${matchedDriver.vehicleModel}.`,
+          text: `¡Hola ${user.name}! Soy tu conductor ${matchedDriver.name}. Ya voy en camino a tu punto de origen en mi ${matchedDriver.vehicleModel}.${isUni ? ' 🎓 Recuérdame presentar tu carnet estudiantil al abordar para la Tarifa Universitaria.' : ''}`,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         }
       ]);
@@ -161,8 +210,8 @@ export default function App() {
       // Add Notification
       const newNotif: AppNotification = {
         id: `notif_${Date.now()}`,
-        title: 'Conductor Asignado 🚕',
-        body: `${matchedDriver.name} (${matchedDriver.vehiclePlate}) ha aceptado tu viaje. Llegada est. en 3 min.`,
+        title: isUni ? 'Conductor Asignado (Tarifa Universitaria 🎓)' : 'Conductor Asignado 🚕',
+        body: `${matchedDriver.name} (${matchedDriver.vehiclePlate}) ha aceptado tu viaje. ${isUni ? `Tarifa Estudiantil: $${finalUsd.toFixed(2)} USD.` : ''} Llegada est. en 3 min.`,
         type: 'trip',
         date: 'Ahora mismo',
         read: false,
