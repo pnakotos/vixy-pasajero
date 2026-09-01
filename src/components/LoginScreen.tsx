@@ -1,9 +1,27 @@
 import React, { useState } from 'react';
 import { UserProfile } from '../types';
 import { Car, Lock, Mail, Phone, User, ShieldCheck, ArrowRight, Sparkles, CheckCircle, Smartphone } from 'lucide-react';
+import { registerClient, loginClient, ClientApiRecord } from '../services/vixyApi';
 
 interface LoginScreenProps {
   onLoginSuccess: (user: UserProfile) => void;
+}
+
+function mapClientRecordToProfile(record: ClientApiRecord): UserProfile {
+  const [firstName, ...rest] = record.name.split(' ');
+  return {
+    id: record.id,
+    name: firstName || record.name,
+    lastName: rest.join(' '),
+    cedula: record.cedula || '',
+    phone: record.phone,
+    email: record.email,
+    avatarUrl: record.avatar_url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150',
+    isVerified: !record.is_blocked,
+    verificationStatus: record.is_blocked ? 'rejected' : 'verified',
+    emergencyContact: record.emergency_contact || '',
+    emergencyPhone: record.emergency_phone || '',
+  };
 }
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
@@ -21,32 +39,25 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
     setIsLoading(true);
-
-    setTimeout(() => {
+    try {
+      const record = await loginClient(emailOrPhone.trim(), password);
+      if (record.auth_token) {
+        localStorage.setItem('vixy_passenger_token', record.auth_token);
+        localStorage.setItem('vixy_passenger_id', record.id);
+      }
+      onLoginSuccess(mapClientRecordToProfile(record));
+    } catch (error) {
+      setErrorMsg(error instanceof Error ? error.message : 'No se pudo iniciar sesión.');
+    } finally {
       setIsLoading(false);
-      // Login success with user profile
-      const loggedUser: UserProfile = {
-        id: 'usr_logged_' + Date.now(),
-        name: emailOrPhone.includes('maria') ? 'María' : 'Carlos',
-        lastName: emailOrPhone.includes('maria') ? 'Gómez' : 'Mendoza',
-        cedula: 'V-24.892.110',
-        phone: emailOrPhone || '0412-5550000',
-        email: emailOrPhone.includes('@') ? emailOrPhone : 'usuario@vixytaxi.com',
-        avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
-        isVerified: true,
-        verificationStatus: 'verified',
-        emergencyContact: 'Mamá - María Mendoza',
-        emergencyPhone: '0414-9998877',
-      };
-      onLoginSuccess(loggedUser);
-    }, 1000);
+    }
   };
 
-  const handleRegisterSubmit = (e: React.FormEvent) => {
+  const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name || !cedula) {
       setErrorMsg('Por favor completa todos los campos requeridos.');
@@ -54,60 +65,24 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
     }
     setErrorMsg('');
     setIsLoading(true);
-
-    setTimeout(() => {
-      setIsLoading(false);
-      const newUser: UserProfile = {
-        id: 'usr_new_' + Date.now(),
-        name: name || 'Nuevo',
-        lastName: lastName || 'Usuario',
-        cedula: cedula || 'V-30.123.456',
-        phone: phone || '0424-1112233',
-        email: email || 'nuevo@vixytaxi.com',
-        avatarUrl: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150',
-        isVerified: false,
-        verificationStatus: 'unverified',
-        emergencyContact: 'Contacto de Emergencia',
-        emergencyPhone: '0412-0000000',
-      };
-      onLoginSuccess(newUser);
-    }, 1200);
-  };
-
-  const handleDemoLogin = (type: 'verified' | 'new') => {
-    setIsLoading(true);
-    setTimeout(() => {
-      setIsLoading(false);
-      if (type === 'verified') {
-        onLoginSuccess({
-          id: 'usr_carlos',
-          name: 'Carlos',
-          lastName: 'Mendoza',
-          cedula: 'V-24.892.110',
-          phone: '0412-5550000',
-          email: 'carlos.mendoza@vixytaxi.com',
-          avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
-          isVerified: true,
-          verificationStatus: 'verified',
-          emergencyContact: 'María Mendoza',
-          emergencyPhone: '0414-9998877',
-        });
-      } else {
-        onLoginSuccess({
-          id: 'usr_ana',
-          name: 'Ana',
-          lastName: 'Rojas',
-          cedula: 'V-28.450.991',
-          phone: '0416-8882211',
-          email: 'ana.rojas@gmail.com',
-          avatarUrl: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150',
-          isVerified: false,
-          verificationStatus: 'unverified',
-          emergencyContact: 'Pedro Rojas',
-          emergencyPhone: '0412-3334455',
-        });
+    try {
+      const record = await registerClient({
+        name: `${name} ${lastName}`.trim(),
+        email,
+        phone,
+        password,
+        cedula,
+      });
+      if (record.auth_token) {
+        localStorage.setItem('vixy_passenger_token', record.auth_token);
+        localStorage.setItem('vixy_passenger_id', record.id);
       }
-    }, 800);
+      onLoginSuccess(mapClientRecordToProfile(record));
+    } catch (error) {
+      setErrorMsg(error instanceof Error ? error.message : 'No se pudo crear la cuenta.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -321,56 +296,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
             </button>
           </form>
         )}
-
-        {/* ALTERNATIVE SOCIAL LOGINS */}
-        <div className="space-y-3">
-          <div className="flex items-center gap-2 text-[10px] text-slate-500 font-bold uppercase tracking-wider">
-            <div className="flex-1 border-b border-purple-900/40"></div>
-            <span>O accede directamente con</span>
-            <div className="flex-1 border-b border-purple-900/40"></div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              type="button"
-              onClick={() => handleDemoLogin('verified')}
-              className="bg-slate-900 hover:bg-purple-950/60 text-slate-200 border border-purple-900/50 p-2.5 rounded-2xl text-xs font-bold flex items-center justify-center gap-2 transition active:scale-95"
-            >
-              <span>🌐 Google</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleDemoLogin('new')}
-              className="bg-slate-900 hover:bg-purple-950/60 text-slate-200 border border-purple-900/50 p-2.5 rounded-2xl text-xs font-bold flex items-center justify-center gap-2 transition active:scale-95"
-            >
-              <span>📘 Facebook</span>
-            </button>
-          </div>
-        </div>
-
-        {/* QUICK DEMO ACCOUNTS ACCESS */}
-        <div className="bg-slate-900/60 p-3.5 rounded-2xl border border-purple-900/30 space-y-2 text-center">
-          <span className="text-[10px] text-purple-300 font-extrabold uppercase tracking-wider block">
-            Acceso Rápido Demo para Pruebas:
-          </span>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => handleDemoLogin('verified')}
-              className="flex-1 bg-purple-600/20 hover:bg-purple-600/40 text-purple-200 border border-purple-500/40 py-2 px-2 rounded-xl text-[11px] font-bold transition"
-            >
-              👤 Usuario Verificado
-            </button>
-            <button
-              type="button"
-              onClick={() => handleDemoLogin('new')}
-              className="flex-1 bg-purple-600/20 hover:bg-purple-600/40 text-purple-200 border border-purple-500/40 py-2 px-2 rounded-xl text-[11px] font-bold transition"
-            >
-              🆕 Nueva Cuenta
-            </button>
-          </div>
-        </div>
 
       </div>
 
