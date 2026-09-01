@@ -120,3 +120,14 @@ export function createRide(body: CreateRideBody): Promise<Record<string, unknown
 export function fetchRide(rideId: string): Promise<Record<string, unknown>> {
   return apiRequest(`/api/rides.php?action=get&id=${encodeURIComponent(rideId)}`);
 }
+
+export function updateRideStatus(
+  rideId: string,
+  status: 'driver_arriving' | 'in_trip' | 'completed' | 'cancelled',
+  actorId?: string,
+): Promise<Record<string, unknown>> {
+  return apiRequest('/api/rides.php?action=status', {
+    method: 'POST',
+    body: JSON.stringify({ rideId, status, actorType: 'passenger', actorId }),
+  });
+}

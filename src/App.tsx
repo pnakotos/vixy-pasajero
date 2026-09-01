@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { UserProfile, VehicleCategory, PaymentMethod, Currency, RideRequest, Driver, WalletTransaction, ScheduledReservation, AppNotification, ChatMessage } from './types';
-import { MOCK_USER, MOCK_LOCATIONS, MOCK_DRIVERS, INITIAL_TRANSACTIONS, INITIAL_RESERVATIONS, INITIAL_NOTIFICATIONS, EXCHANGE_RATE_VES } from './data/mockData';
+import { MOCK_USER, MOCK_LOCATIONS, INITIAL_TRANSACTIONS, INITIAL_RESERVATIONS, INITIAL_NOTIFICATIONS, EXCHANGE_RATE_VES } from './data/mockData';
+import { createRide, fetchRide, updateRideStatus } from './services/vixyApi';
 import { ShieldAlert } from 'lucide-react';
 
 import { Header } from './components/Header';
@@ -154,16 +155,12 @@ export default function App() {
       console.log('Error al consultar tarifa universitaria antes de solicitar:', err);
     }
 
-    // Simulate driver matching in 2.5 seconds
-    setTimeout(() => {
-      const matchedDriver = MOCK_DRIVERS.find(d => d.vehicleCategory === selectedCategory) || MOCK_DRIVERS[0];
-      const initialDriverLoc: [number, number] = [
-        pickupCoords[0] + 0.008,
-        pickupCoords[1] + 0.008,
-      ];
-
-      const newRide: RideRequest = {
-        id: `ride_${Date.now()}`,
+    // Crea la solicitud de viaje real en el backend (rides.php); el despacho al
+    // conductor disponible más cercano lo hace el servidor automáticamente.
+    try {
+      const created = await createRide({
+        userId: user.id,
+        clientId: localStorage.getItem('vixy_passenger_id') || undefined,
         category: selectedCategory,
         pickupAddress,
         dropoffAddress,
@@ -174,84 +171,127 @@ export default function App() {
         priceUsd: parseFloat(finalUsd.toFixed(2)),
         priceVes: parseFloat(finalVes.toFixed(2)),
         paymentMethod,
-        driver: matchedDriver,
-        status: 'driver_assigned',
+      });
+      applyRideSnapshot(created);
+
+      // Sincroniza con Firestore (histórico secundario, no crítico)
+      syncRideToFirestore({
+        id: String(created.id || ''),
+        category: selectedCategory,
+        pickupAddress,
+        dropoffAddress,
+        pickupCoords,
+        dropoffCoords,
+        distanceKm,
+        durationMins: Math.round(distanceKm * 2.5),
+        priceUsd: parseFloat(finalUsd.toFixed(2)),
+        priceVes: parseFloat(finalVes.toFixed(2)),
+        paymentMethod,
+        status: (created.status as RideRequest['status']) || 'searching',
         createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         etaDriverArrivalMins: 3,
         etaTripArrivalMins: Math.round(distanceKm * 2.5),
         isUniversityFare: isUni,
         universityName: uniName || undefined,
-      };
+      }, user.id);
 
-      setCurrentRide(newRide);
-      setDriverLocation(initialDriverLoc);
-      setIsSearchingDriver(false);
-
-      // Sync ride request with Firebase Firestore
-      syncRideToFirestore(newRide, user.id);
-
-      // Sync ride request with Administrative Panel (https://vhixy.site/)
-      fetch('/api/admin/sync-ride', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newRide),
-      }).catch(err => console.log('Admin sync notice:', err));
-
-      // Initial chat message from assigned driver
-      setDriverChatMessages([
-        {
-          id: 'chat_init',
-          sender: 'driver',
-          text: `¡Hola ${user.name}! Soy tu conductor ${matchedDriver.name}. Ya voy en camino a tu punto de origen en mi ${matchedDriver.vehicleModel}.${isUni ? ' 🎓 Recuérdame presentar tu carnet estudiantil al abordar para la Tarifa Universitaria.' : ''}`,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        }
-      ]);
-
-      // Add Notification
       const newNotif: AppNotification = {
         id: `notif_${Date.now()}`,
-        title: isUni ? 'Conductor Asignado (Tarifa Universitaria 🎓)' : 'Conductor Asignado 🚕',
-        body: `${matchedDriver.name} (${matchedDriver.vehiclePlate}) ha aceptado tu viaje. ${isUni ? `Tarifa Estudiantil: $${finalUsd.toFixed(2)} USD.` : ''} Llegada est. en 3 min.`,
+        title: 'Buscando tu conductor... 🔎',
+        body: 'Estamos localizando al conductor disponible más cercano a tu ubicación.',
         type: 'trip',
         date: 'Ahora mismo',
         read: false,
       };
       setNotifications(prev => [newNotif, ...prev]);
-    }, 2500);
+    } catch (error) {
+      console.error('Error al solicitar el viaje:', error);
+      alert(error instanceof Error ? error.message : 'No se pudo solicitar el viaje. Intenta de nuevo.');
+    } finally {
+      setIsSearchingDriver(false);
+    }
   };
 
-  // Driver GPS position animation interval
+  // Convierte la categoría interna del conductor (taxi/mototaxi/delivery) a la
+  // categoría que usa la app pasajero (auto/moto/delivery).
+  function driverCategoryToVehicleCategory(category: string): VehicleCategory {
+    if (category === 'taxi') return 'auto';
+    if (category === 'mototaxi') return 'moto';
+    return 'delivery';
+  }
+
+  // Aplica un snapshot del viaje devuelto por el backend (rides.php) al estado local.
+  const applyRideSnapshot = (row: Record<string, unknown>) => {
+    const status = String(row.status || 'searching') as RideRequest['status'];
+    const hasDriver = !!row.assigned_driver_id;
+
+    const driver: Driver | undefined = hasDriver
+      ? {
+          id: String(row.assigned_driver_id),
+          name: String(row.driver_name || 'Conductor Vixy'),
+          lastName: '',
+          rating: 5,
+          totalTrips: 0,
+          photoUrl: 'https://images.unsplash.com/photo-1568602471122-7832951cc4c5?w=150',
+          vehicleCategory: driverCategoryToVehicleCategory(String(row.driver_category || 'auto')),
+          vehicleModel: '',
+          vehiclePlate: '',
+          vehicleColor: '',
+          phone: String(row.driver_phone || ''),
+          currentLat: Number(row.driver_lat || pickupCoords[0]),
+          currentLng: Number(row.driver_lng || pickupCoords[1]),
+        }
+      : undefined;
+
+    setCurrentRide(prev => ({
+      id: String(row.id || prev?.id || ''),
+      category: selectedCategory,
+      pickupAddress: String(row.pickup_address || pickupAddress),
+      dropoffAddress: String(row.dropoff_address || dropoffAddress),
+      pickupCoords: [Number(row.pickup_lat ?? pickupCoords[0]), Number(row.pickup_lng ?? pickupCoords[1])],
+      dropoffCoords: [Number(row.dropoff_lat ?? dropoffCoords[0]), Number(row.dropoff_lng ?? dropoffCoords[1])],
+      distanceKm: Number(row.distance_km ?? distanceKm),
+      durationMins: Number(row.duration_mins ?? 0),
+      priceUsd: Number(row.price_usd ?? calculatedPriceUsd),
+      priceVes: Number(row.price_ves ?? calculatedPriceVes),
+      paymentMethod,
+      driver,
+      status,
+      createdAt: prev?.createdAt || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      etaDriverArrivalMins: prev?.etaDriverArrivalMins ?? 3,
+      etaTripArrivalMins: prev?.etaTripArrivalMins ?? Math.round(distanceKm * 2.5),
+      isUniversityFare: prev?.isUniversityFare,
+      universityName: prev?.universityName,
+    }));
+
+    if (driver) {
+      setDriverLocation([driver.currentLat, driver.currentLng]);
+    }
+
+    if (status === 'completed') {
+      setCompletedRideForModal(prev => prev ?? { ...(currentRide as RideRequest), status: 'completed' });
+    }
+  };
+
+  // Sondeo del estado real del viaje cada 3 segundos mientras esté activo
   useEffect(() => {
-    if (!currentRide || !driverLocation) return;
+    if (!currentRide || ['completed', 'cancelled'].includes(currentRide.status)) return;
 
-    const interval = setInterval(() => {
-      setDriverLocation(prev => {
-        if (!prev) return prev;
-        const targetCoords = currentRide.status === 'in_trip' ? currentRide.dropoffCoords : currentRide.pickupCoords;
-        const deltaLat = (targetCoords[0] - prev[0]) * 0.15;
-        const deltaLng = (targetCoords[1] - prev[1]) * 0.15;
+    const poll = async () => {
+      try {
+        const row = await fetchRide(currentRide.id);
+        applyRideSnapshot(row);
+      } catch (error) {
+        console.warn('No se pudo actualizar el estado del viaje:', error);
+      }
+    };
 
-        // If arrived at pickup
-        if (Math.abs(deltaLat) < 0.0002 && Math.abs(deltaLng) < 0.0002 && currentRide.status === 'driver_assigned') {
-          setCurrentRide(r => r ? { ...r, status: 'driver_arriving', etaDriverArrivalMins: 0 } : null);
-          setTimeout(() => {
-            setCurrentRide(r => r ? { ...r, status: 'in_trip' } : null);
-          }, 4000);
-        }
-
-        // If arrived at dropoff destination during trip
-        if (Math.abs(deltaLat) < 0.0003 && Math.abs(deltaLng) < 0.0003 && currentRide.status === 'in_trip') {
-          handleFinishTrip();
-        }
-
-        return [prev[0] + deltaLat, prev[1] + deltaLng];
-      });
-    }, 2000);
-
+    const interval = setInterval(poll, 3000);
     return () => clearInterval(interval);
-  }, [currentRide, driverLocation]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentRide?.id, currentRide?.status]);
 
-  // Finish trip trigger
+  // Finish trip trigger (usado cuando el servidor confirma que el viaje ya está completado)
   const handleFinishTrip = () => {
     if (!currentRide) return;
     const completed = { ...currentRide, status: 'completed' as const };
@@ -308,6 +348,11 @@ export default function App() {
 
   // Cancel Current Ride
   const handleCancelRide = () => {
+    if (currentRide) {
+      void updateRideStatus(currentRide.id, 'cancelled', user.id).catch((error) =>
+        console.warn('No se pudo notificar la cancelación al servidor:', error)
+      );
+    }
     setCurrentRide(null);
     setDriverLocation(undefined);
   };
